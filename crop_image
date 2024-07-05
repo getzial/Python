@@ -1,0 +1,8 @@
+def crop_image(path, image_path, image_name, x1, y1, x2, y2, cropped_name, language):
+    cwd = os.getcwd()
+    # Opens a image in RGB mode
+    local_image = Image.open(path + f"\\{language}\\{image_path}\\{image_name}.png")
+    # (It will not change original image)
+    local_cropped_image = local_image.crop((x1, y1, x2, y2))
+    # local_cropped_image.show()
+    local_cropped_image.save(path + f"\\{language}\\cropped\\{image_path}\\{cropped_name}.png")
