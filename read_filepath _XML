@@ -1,0 +1,7 @@
+#Read from XML
+    tree = ET.parse('GUI_String_Config.xml')
+    root = tree.getroot()
+    cwd = root.find('./data1').attrib['working_directory']
+    input_excel_path = root.find('./data2').attrib['input_excel_path']
+    output_excel_path = root.find('./data3').attrib['output_excel_path']
+    test_input_images_path = root.find('./data4').attrib['test_input_images_path']
