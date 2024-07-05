@@ -1,0 +1,225 @@
+import os
+import cv2
+import glob
+import openpyxl
+from PIL import Image, ImageDraw
+from pytesseract import pytesseract
+from tkinter import messagebox
+import xml.etree.ElementTree as ET
+
+def process_image():
+    test_result = "FAIL"
+    old_image_path = ""
+
+    #Read from XML
+    tree = ET.parse('GUI_String_Config.xml')
+    root = tree.getroot()
+    cwd = root.find('./data1').attrib['working_directory']
+    input_excel_path = root.find('./data2').attrib['input_excel_path']
+    output_excel_path = root.find('./data3').attrib['output_excel_path']
+    test_input_images_path = root.find('./data4').attrib['test_input_images_path']
+
+
+
+    try:
+        # input_excel_path = cwd + f"\\testinput\\GUI_String_Test_Data.xlsx"
+        # output_excel_path = cwd + f"\\testoutput\\GUI_String_Test_Report.xlsx"
+        input_workbook = openpyxl.load_workbook(input_excel_path)
+        output_workbook = openpyxl.load_workbook(output_excel_path)
+        language_list = input_workbook.get_sheet_names()
+        no_of_languages = 1
+
+        for i in range(0, no_of_languages):
+            num = i
+            current_language = language_list[num]
+            input_sheet = input_workbook.get_sheet_by_name(current_language)
+            output_sheet = output_workbook.get_sheet_by_name(current_language)
+
+            if (os.path.exists(test_input_images_path + f"\\{current_language}\\trace\\")):
+                files = glob.glob(test_input_images_path + f"\\{current_language}\\trace\\*.png")
+                for f in files:
+                    os.remove(f)
+            else:
+                messagebox.showinfo("Error", f"Trace folder not available for language, {current_language}. Test being Terminated.")
+                break
+
+            # for row in (2, 134):
+            for row in range(2, input_sheet.max_row + 1):
+                image_path = input_sheet.cell(row, 1).value
+
+
+                if not image_path == old_image_path:
+                    if (os.path.exists(test_input_images_path + f"\\{current_language}\\cropped\\{image_path}")):
+                        files = glob.glob(test_input_images_path + f"\\{current_language}\\cropped\\{image_path}\\*.png")
+                        for f in files:
+                            os.remove(f)
+                    else:
+                        messagebox.showinfo("Error",
+                                            f"Cropped folder not available for language, {current_language}\\"
+                                            + f"{image_path}." + " Test being Terminated")
+                        print("check the First column in the Excel sheet")
+                        break
+
+                # read data from excel
+                image_name = input_sheet.cell(row, 2).value
+                x1 = input_sheet.cell(row, 3).value
+                y1 = input_sheet.cell(row, 4).value
+                x2 = input_sheet.cell(row, 5).value
+                y2 = input_sheet.cell(row, 6).value
+                cropped_name = input_sheet.cell(row, 7).value
+                alternate_Language = input_sheet.cell(row, 8).value
+                expected_value = input_sheet.cell(row, 9).value
+
+
+                print(f"Language: {current_language}, processing row: {row}/{input_sheet.max_row}")
+
+                crop_image(test_input_images_path, image_path, image_name, x1, y1, x2, y2, cropped_name, current_language)
+                language_code = get_language_code(current_language, alternate_Language)
+                if not language_code == "NULL":
+                    for retry_count in range(0, 3):
+                        actual_value = text_extract(cwd, test_input_images_path, image_path, cropped_name, current_language, language_code, retry_count)
+
+                        if actual_value == expected_value:
+                            test_result = "PASS"
+                            highlight_color = "blue"
+                            if retry_count > 0:
+                                print(f"Actual_value   : {actual_value}")
+                                print(f"Successful on attempt: {retry_count+1}")
+                            break
+
+                        else:
+                            test_result = "FAIL"
+                            highlight_color = "red"
+                            if retry_count == 0:
+                                print(f"Expected_value : {expected_value}")
+                            print(f"Actual_value   : {actual_value}")
+                            if retry_count == 2:
+                                print(f"Language: {current_language}, row: {row} failed")
+
+                else:
+                    print("Invalid or Blank language in Excel sheet, terminating the test")
+                    return False, "Invalid or Blank language"
+
+
+                highlight_rectangle(test_input_images_path, image_path, image_name, x1, y1, x2, y2, current_language, highlight_color)
+                cropped_image_path = ('=HYPERLINK(\"' + test_input_images_path + f'\\{current_language}\\cropped\\{image_path}\\{cropped_name}.png\")')
+                input_sheet.cell(row, 10).value = actual_value
+                input_sheet.cell(row, 11).value = test_result
+                input_sheet.cell(row, 12).value = cropped_image_path
+                input_workbook.save(input_excel_path)
+
+                output_sheet.cell(row, 1).value = image_name
+                output_sheet.cell(row, 2).value = expected_value
+                output_sheet.cell(row, 3).value = actual_value
+                output_sheet.cell(row, 4).value = test_result
+                output_workbook.save(output_excel_path)
+
+                old_image_path = image_path
+
+
+    except FileNotFoundError as error:
+        print(f'{error} file not found, check the name or path of the file')
+        return False, "File not found or name/path invalid"
+
+    return True, "No Error"
+
+def crop_image(path, image_path, image_name, x1, y1, x2, y2, cropped_name, language):
+    cwd = os.getcwd()
+    # Opens a image in RGB mode
+    local_image = Image.open(path + f"\\{language}\\{image_path}\\{image_name}.png")
+    # (It will not change original image)
+    local_cropped_image = local_image.crop((x1, y1, x2, y2))
+    # local_cropped_image.show()
+    local_cropped_image.save(path + f"\\{language}\\cropped\\{image_path}\\{cropped_name}.png")
+
+
+def highlight_rectangle(path, image_path, image_name, x1, y1, x2, y2, language, highlight_color):
+    cwd = os.getcwd()
+    if (os.path.exists(path + f"\\{language}\\trace\\" + "Trace_" + f"{image_name}.png")):
+        # Opens a image in RGB mode
+        local_image = Image.open(path + f"\\{language}\\trace\\" + "Trace_" + f"{image_name}.png").convert("RGBA")
+    else:
+        local_image = Image.open(path + f"\\{language}\\{image_path}\\{image_name}.png").convert("RGBA")
+
+    draw = ImageDraw.Draw(local_image)
+    draw.rectangle(((x1, y1), (x2, y2)), outline=highlight_color,  fill=None, width=5)
+    local_image.save(path + f"\\{language}\\trace\\" + "Trace_" + f"{image_name}.png")
+
+def get_language_code(language, alternate_Language):
+
+    if alternate_Language == "NA":
+        language_under_test = language
+    else:
+        language_under_test = alternate_Language
+
+    if language_under_test == "Arabic":
+        language_code = 'ara'
+    elif language_under_test == "English":
+        language_code = 'eng'
+    elif language_under_test == "French":
+        language_code = 'fra'
+    elif language_under_test == "German":
+        language_code = 'deu'
+    elif language_under_test == "Czech":
+        language_code = 'ces'
+    elif language_under_test == "Danish":
+        language_code = 'dan'
+    elif language_under_test == "Dutch":
+        language_code = 'nld'
+    elif language_under_test == "Spanish":
+        language_code = 'spa'
+    elif language_under_test == "Finnish":
+        language_code = 'fin'
+    elif language_under_test == "Hebrew":
+        language_code = 'heb'
+    elif language_under_test == "Italian":
+        language_code = 'ita'
+    elif language_under_test == "Norwegian":
+        language_code = 'nor'
+    elif language_under_test == "Swedish":
+        language_code = 'swe'
+    else:
+        return "NULL"
+
+    return language_code
+
+def text_extract(cwd, path, image_path, cropped_name, language, language_code, retry_count):
+    # cwd = os.getcwd()
+    pytesseract.tesseract_cmd = cwd + "\\library\\Tesseract-OCR\\tesseract.exe"
+    cropped_path = path + f"\\{language}\\cropped\\{image_path}\\{cropped_name}.png"
+
+    if retry_count == 0:
+        #Standard method
+        cropped_image = Image.open(cropped_path)
+
+    elif retry_count == 1:
+        #Grey scale method
+        # Load the image
+        img = cv2.imread(cropped_path)
+        # Center the image
+        img = cv2.copyMakeBorder(img, 50, 50, 50, 50, cv2.BORDER_CONSTANT, value=[255])
+        # Up-sample
+        img = cv2.resize(img, (0, 0), fx=2, fy=2)
+        # Convert to gray-scale
+        cropped_image = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    elif retry_count == 2:
+        # Smoothening method
+        # Load the image
+        img = cv2.imread(cropped_path)
+        gry = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        blr = cv2.GaussianBlur(gry, (3, 3), 0)
+        thr = cv2.threshold(blr, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+        (h_thr, w_thr) = thr.shape[:2]
+        crp = thr[0:h_thr, 0:w_thr]
+        crp = cv2.resize(crp, (w_thr * 2, h_thr * 2))
+        cropped_image = cv2.erode(crp, None, iterations=1)
+
+    else:
+        print("Invalid attempt count")
+        return "NULL"
+
+    # OCR
+    text = pytesseract.image_to_string(cropped_image, config="--psm 6", lang=language_code)[:-1]
+
+    return text
